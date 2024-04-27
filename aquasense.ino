@@ -22,7 +22,7 @@ PH4502C_Sensor ph4502(PH4502C_PH_LEVEL_PIN, PH4502C_TEMP_PIN);
 SoftwareSerial sim800l(10, 11); // RX, TX pins for SIM800L
 
 unsigned long pumpStartTime = 0;
-bool pumpIsOn = false;
+bool pumpIsOn = true;
 
 unsigned long lastAverageTime = 0;
 unsigned long lastReadTime = 0;
@@ -33,6 +33,8 @@ int numReadings = 0;
 
 float calibration = 3.27;
 int buf[10], temp;
+
+bool automaticModeOn = true;
 
 String phoneNumber = "+639604377530";
 String phoneNumber1 = "+639084575671";
@@ -115,7 +117,55 @@ String _readSerial()
     }
     if (sim800l.available())
     {
-        return sim800l.readString();
+        String message = sim800l.readString();
+        if (message.startsWith("+CMT:"))
+        {
+            int index = message.indexOf("\r");
+            return message.substring(index + 2);
+        }
+    }
+    return "";
+}
+
+void handleSMS(String message)
+{
+    message.toLowerCase();
+    if (message == "pump on")
+    {
+        digitalWrite(PUMP_PIN, LOW);
+        pumpIsOn = true;
+        sendSMS("Pump has been turned on.", phoneNumber);
+    }
+    else if (message == "pump off")
+    {
+        digitalWrite(PUMP_PIN, HIGH);
+        pumpIsOn = false;
+        sendSMS("Pump has been turned off.", phoneNumber);
+    }
+    else if (message == "auto on")
+    {
+        automaticModeOn = true;
+        sendSMS("Automatic mode has been turned on.", phoneNumber);
+    }
+    else if (message == "auto off")
+    {
+        automaticModeOn = false;
+        sendSMS("Automatic mode has been turned off.", phoneNumber);
+    }
+    else if (message == "help" || message == "instructions")
+    {
+        sendInstructions();
+    }
+    else if (message == "status")
+    {
+        String status = "AquaSense Status:\n\n";
+        status += "Automatic Mode: " + String(automaticModeOn ? "ON" : "OFF") + "\n";
+        status += "Pump Status: " + String(pumpIsOn ? "ON" : "OFF") + "\n";
+        sendSMS(status, phoneNumber);
+    }
+    else
+    {
+        sendSMS("Invalid command. Type 'help' or 'instructions' for available commands.", phoneNumber);
     }
 }
 
@@ -286,32 +336,49 @@ void readAndPrintSensorData()
     }
 }
 
+void sendInstructions()
+{
+    String message = "AquaSense Instructions:\n\n";
+    message += "Available commands:\n";
+    message += "- 'pump on': Turn on the pump manually\n";
+    message += "- 'pump off': Turn off the pump manually\n";
+    message += "- 'auto on': Enable automatic pump control based on pH level\n";
+    message += "- 'auto off': Disable automatic pump control\n";
+    message += "- 'status': Get the current status of AquaSense\n";
+    message += "- 'help' or 'instructions': Show these instructions";
+
+    sendSMS(message, phoneNumber);
+}
+
 void handlePump(float phLevelAvg)
 {
     int phLevel = phLevelAvg;
     Serial.println("AVG pH Level: " + String(phLevel));
-    if (phLevel < PH_TRIGGER_LOW || phLevel > PH_TRIGGER_HIGH)
+    if (automaticModeOn)
     {
-        if (!pumpIsOn)
+        if (phLevel < PH_TRIGGER_LOW || phLevel > PH_TRIGGER_HIGH)
         {
-            notifyPumpOn(phLevel);
-            digitalWrite(PUMP_PIN, LOW);
-            pumpStartTime = millis();
-            pumpIsOn = true;
-            Serial.println("pH level is outside the safe range. Turning on the pump.");
-        }
-    }
-    else
-    {
-        if (pumpIsOn || millis() - pumpStartTime >= PUMP_ON_TIME)
-        {
-            if (pumpIsOn) // Notify only if the pump was turned on
+            if (!pumpIsOn)
             {
-                notifyPumpOff(phLevel);
+                notifyPumpOn(phLevel);
+                digitalWrite(PUMP_PIN, LOW);
+                pumpStartTime = millis();
+                pumpIsOn = true;
+                Serial.println("pH level is outside the safe range. Turning on the pump.");
             }
-            digitalWrite(PUMP_PIN, HIGH);
-            pumpIsOn = false;
-            Serial.println("pH level is within the safe range. Turning off the pump.");
+        }
+        else
+        {
+            if (pumpIsOn || millis() - pumpStartTime >= PUMP_ON_TIME)
+            {
+                if (pumpIsOn) // Notify only if the pump was turned on
+                {
+                    notifyPumpOff(phLevel);
+                }
+                digitalWrite(PUMP_PIN, HIGH);
+                pumpIsOn = false;
+                Serial.println("pH level is within the safe range. Turning off the pump.");
+            }
         }
     }
 }
@@ -337,6 +404,12 @@ void loop()
     {
         unsigned long remainingTime = AVERAGE_INTERVAL - (millis() - lastAverageTime);
         Serial.println("Time until next pH level check: " + String(remainingTime / 1000) + "s");
+    }
+    // Check for incoming SMS messages
+    String message = _readSerial();
+    if (message != "")
+    {
+        handleSMS(message);
     }
     delay(DELAY_TIME);
 }
