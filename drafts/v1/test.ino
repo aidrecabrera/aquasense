@@ -1,7 +1,7 @@
 #include <ph4502c_sensor.h>
 #include <LiquidCrystal_I2C.h>
-#include <SoftwareSerial.h>
 
+// Constants
 #define PH4502C_PH_LEVEL_PIN A0
 #define PH4502C_TEMP_PIN A1
 #define PUMP_PIN 8
@@ -17,6 +17,7 @@
 #define AVERAGE_INTERVAL 30000
 #define READ_INTERVAL 1000
 
+// Logos
 byte waterDrop[] = {
     B00100,
     B00100,
@@ -107,6 +108,7 @@ byte signal4[] = {
     B00111,
     B00111};
 
+// Function prototypes
 void setupAquaSenseSystem();
 void loopAquaSenseSystem();
 void readAndPrintSensorData();
@@ -114,13 +116,9 @@ float readPHLevel();
 float readTemperature();
 void handlePump(float phLevelAvg);
 
+// Global variables
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 PH4502C_Sensor ph4502(PH4502C_PH_LEVEL_PIN, PH4502C_TEMP_PIN);
-SoftwareSerial sim(10, 11);
-
-int _timeout;
-String _buffer;
-String number = "+639604377530";
 
 unsigned long pumpStartTime = 0;
 bool pumpIsOn = true;
@@ -144,21 +142,10 @@ void loop()
     loopAquaSenseSystem();
 }
 
-void initializeGSM()
-{
-    delay(7000);
-    _buffer.reserve(50);
-    sim.begin(9600);
-    Serial.println("GSM has been initialized");
-    delay(1000);
-}
-
 void setupAquaSenseSystem()
 {
-    initializeGSM();
-
     Serial.begin(9600);
-    Serial.println("Welcome to AquaSense!");
+    Serial.println("PH4502C Sensor...");
     pinMode(PUMP_PIN, OUTPUT);
     digitalWrite(PUMP_PIN, LOW);
 
@@ -174,9 +161,11 @@ void setupAquaSenseSystem()
     lcd.createChar(6, signal2);
     lcd.createChar(7, signal3);
 
+    // Bootup animation
     lcd.setCursor(4, 1);
     lcd.print("AquaSense");
 
+    // Animation
     for (int i = 0; i < 3; i++)
     {
         lcd.setCursor(14, 1);
@@ -231,7 +220,7 @@ void readAndPrintSensorData()
     Serial.println("Current Temperature: " + String(temperature) + " °C");
     Serial.println("Current pH Level: " + String(phLevel));
 
-    float doLevel = 14.6 - 0.4 * phLevel;
+    float doLevel = 14.6 - 0.4 * phLevel; // Inversely proportional to pH level
     String doDescription;
 
     if (doLevel >= 8.0)
@@ -293,7 +282,7 @@ void readAndPrintSensorData()
 
 float readPHLevel()
 {
-    float phLevel = (ph4502.read_ph_level() - calibration);
+    float phLevel = (ph4502.read_ph_level() - calibration); // TODO: Adjust the ph offset
     return phLevel;
 }
 

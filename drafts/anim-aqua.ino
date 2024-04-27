@@ -63,7 +63,7 @@ byte pump[] = {
     B11111,
     B00000};
 
-byte pokemon[] = {
+byte circle[] = {
     B00000,
     B01110,
     B10001,
@@ -87,7 +87,7 @@ void setup()
     lcd.createChar(0, waterDrop);
     lcd.createChar(1, thermometer);
     lcd.createChar(2, pump);
-    lcd.createChar(3, pokemon);
+    lcd.createChar(3, circle);
 
     // Bootup animation
     lcd.setCursor(4, 1);
