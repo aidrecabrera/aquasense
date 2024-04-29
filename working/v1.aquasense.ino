@@ -127,7 +127,6 @@ bool pumpIsOn = true;
 
 unsigned long lastAverageTime = 0;
 unsigned long lastReadTime = 0;
-
 float totalPhLevel = 0;
 float totalTemperature = 0;
 int numReadings = 0;
@@ -136,35 +135,9 @@ float calibration = 3.27;
 
 void setup()
 {
-    setupAquaSenseSystem();
-}
-
-void loop()
-{
-    loopAquaSenseSystem();
-}
-
-void initializeGSM()
-{
-    delay(7000);
-    _buffer.reserve(50);
-    sim.begin(9600);
-    Serial.println("GSM has been initialized");
-    delay(1000);
-}
-
-void setupAquaSenseSystem()
-{
-    initializeGSM();
-
-    Serial.begin(9600);
-    Serial.println("Welcome to AquaSense!");
-    pinMode(PUMP_PIN, OUTPUT);
-    digitalWrite(PUMP_PIN, LOW);
-
+    lcd.init();
     lcd.init();
     lcd.backlight();
-
     lcd.createChar(0, waterDrop);
     lcd.createChar(1, thermometer);
     lcd.createChar(2, pump);
@@ -187,11 +160,52 @@ void setupAquaSenseSystem()
         delay(500);
     }
 
-    delay(1000);
     lcd.setCursor(14, 1);
     lcd.write(0);
     delay(1000);
     lcd.clear();
+
+    SendMessage("AquaSystem is online");
+    Serial.begin(9600);
+    Serial.println("Welcome to AquaSense!");
+    _buffer.reserve(50);
+    sim.begin(9600);
+    Serial.println("GSM has been initialized");
+    pinMode(PUMP_PIN, OUTPUT);
+    digitalWrite(PUMP_PIN, LOW);
+}
+
+void loop()
+{
+    loopAquaSenseSystem();
+}
+
+void SendMessage(String message)
+{
+    Serial.println("Sending Message: \"" + message + "\" to " + number);
+    sim.println("AT+CMGF=1"); // Text Mode
+    delay(200);
+    sim.println("AT+CMGS=\"" + number + "\"\r");
+    delay(200);
+    sim.println(message);
+    delay(100);
+    sim.println((char)26); // ASCII code of CTRL+Z
+    delay(200);
+    _buffer = _readSerial();
+}
+
+String _readSerial()
+{
+    _timeout = 0;
+    while (!sim.available() && _timeout < 12000)
+    {
+        delay(13);
+        _timeout++;
+    }
+    if (sim.available())
+    {
+        return sim.readString();
+    }
 }
 
 void loopAquaSenseSystem()
@@ -213,7 +227,7 @@ void loopAquaSenseSystem()
     else
     {
         unsigned long remainingTime = AVERAGE_INTERVAL - (millis() - lastAverageTime);
-        Serial.println("Time until next pH level check: " + String(remainingTime / 1000) + "s");
+        // Serial.println("Time until next pH level check: " + String(remainingTime / 1000) + "s");
     }
 
     delay(DELAY_TIME);
@@ -228,8 +242,8 @@ void readAndPrintSensorData()
     totalTemperature += temperature;
     numReadings++;
 
-    Serial.println("Current Temperature: " + String(temperature) + " °C");
-    Serial.println("Current pH Level: " + String(phLevel));
+    // Serial.println("Current Temperature: " + String(temperature) + " °C");
+    // Serial.println("Current pH Level: " + String(phLevel));
 
     float doLevel = 14.6 - 0.4 * phLevel;
     String doDescription;
@@ -310,6 +324,10 @@ void handlePump(float phLevelAvg)
     {
         if (!pumpIsOn)
         {
+            if (!pumpIsOn)
+            {
+                notifyPumpOn();
+            }
             digitalWrite(PUMP_PIN, LOW);
             pumpIsOn = true;
             Serial.println("pH level is outside the safe range. Turning on the pump.");
@@ -319,9 +337,23 @@ void handlePump(float phLevelAvg)
     {
         if (pumpIsOn || millis() - pumpStartTime >= PUMP_ON_TIME)
         {
+            if (pumpIsOn)
+            {
+                notifyPumpOff();
+            }
             digitalWrite(PUMP_PIN, HIGH);
             pumpIsOn = false;
             Serial.println("pH level is within the safe range. Turning off the pump.");
         }
     }
+}
+
+void notifyPumpOff()
+{
+    SendMessage("Pump has been turned off");
+}
+
+void notifyPumpOn()
+{
+    SendMessage("Pump has been turned on");
 }

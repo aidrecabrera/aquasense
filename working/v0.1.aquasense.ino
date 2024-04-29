@@ -1,0 +1,253 @@
+#include <ph4502c_sensor.h>
+#include <LiquidCrystal_I2C.h>
+
+#define PH4502C_PH_LEVEL_PIN A0
+#define PH4502C_TEMP_PIN A1
+#define PUMP_PIN 8
+
+#define PH_SAFE_LOW 7.0
+#define PH_SAFE_HIGH 8.0
+#define PH_TRIGGER_LOW 5.5
+#define PH_TRIGGER_HIGH 8.5
+
+#define PUMP_ON_TIME 30000
+#define DELAY_TIME 1000
+
+#define AVERAGE_INTERVAL 30000
+#define READ_INTERVAL 1000
+
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+PH4502C_Sensor ph4502(PH4502C_PH_LEVEL_PIN, PH4502C_TEMP_PIN);
+
+unsigned long pumpStartTime = 0;
+bool pumpIsOn = false;
+
+unsigned long lastAverageTime = 0;
+unsigned long lastReadTime = 0;
+
+float totalPhLevel = 0;
+float totalTemperature = 0;
+int numReadings = 0;
+
+float calibration = 24.58;
+int buf[10], temp;
+
+// Custom characters
+byte waterDrop[] = {
+    B00100,
+    B00100,
+    B01110,
+    B11111,
+    B11111,
+    B01110,
+    B00100,
+    B00000};
+
+byte thermometer[] = {
+    B00100,
+    B01010,
+    B01010,
+    B01010,
+    B01010,
+    B11111,
+    B11111,
+    B00000};
+
+byte pump[] = {
+    B01110,
+    B10001,
+    B10001,
+    B10001,
+    B11111,
+    B11111,
+    B11111,
+    B00000};
+
+byte circle[] = {
+    B00000,
+    B01110,
+    B10001,
+    B10001,
+    B10001,
+    B10001,
+    B01110,
+    B00000};
+
+void setup()
+{
+    Serial.begin(9600);
+    Serial.println("PH4502C Sensor...");
+    pinMode(PUMP_PIN, OUTPUT);
+    digitalWrite(PUMP_PIN, LOW);
+
+    lcd.init();
+    lcd.backlight();
+
+    // Create custom characters
+    lcd.createChar(0, waterDrop);
+    lcd.createChar(1, thermometer);
+    lcd.createChar(2, pump);
+    lcd.createChar(3, circle);
+
+    // Bootup animation
+    lcd.setCursor(4, 1);
+    lcd.print("AquaSense");
+    lcd.setCursor(14, 1);
+    lcd.write(0);
+    delay(2000);
+    lcd.clear();
+}
+
+float readPHLevel()
+{
+    float phLevel = (ph4502.read_ph_level() - 3.57); // TODO: Adjust the ph offset
+    return phLevel;
+}
+
+float readTemperature()
+{
+    float temperature = ph4502.read_temp() / 27;
+    return temperature;
+}
+
+void readAndPrintSensorData()
+{
+    if (millis() - lastReadTime >= READ_INTERVAL)
+    {
+        float phLevel = readPHLevel();
+        float temperature = readTemperature();
+
+        totalPhLevel += phLevel;
+        totalTemperature += temperature;
+        numReadings++;
+
+        Serial.println("Current Temperature: " + String(temperature) + " °C");
+        Serial.println("Current pH Level: " + String(phLevel));
+
+        float doLevel = 14.6 - 0.4 * phLevel; // Inversely proportional to pH level
+        String doDescription;
+
+        if (doLevel >= 8.0)
+        {
+            doDescription = "Optimal";
+        }
+        else if (doLevel >= 6.0)
+        {
+            doDescription = "High";
+        }
+        else if (doLevel >= 4.0)
+        {
+            doDescription = "Moderate";
+        }
+        else if (doLevel >= 2.0)
+        {
+            doDescription = "Low";
+        }
+        else if (doLevel >= 1.0)
+        {
+            doDescription = "Critical";
+        }
+        else if (doLevel >= 0.5)
+        {
+            doDescription = "Anoxic";
+        }
+        else if (doLevel >= 0.2)
+        {
+            doDescription = "Fluctuating";
+        }
+        else if (doLevel >= 0.1)
+        {
+            doDescription = "Saturated";
+        }
+        else
+        {
+            doDescription = "Supersaturated";
+        }
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("DO: " + doDescription);
+        lcd.setCursor(0, 1);
+        lcd.print("pH: ");
+        lcd.write(0);
+        lcd.print(String(phLevel, 2));
+        lcd.setCursor(0, 2);
+        lcd.print("Temp: ");
+        lcd.write(1);
+        lcd.print(String(temperature, 1) + " C");
+        if (pumpIsOn)
+        {
+            lcd.setCursor(0, 3);
+            lcd.write(2);
+            lcd.print(" Pump ON");
+        }
+        else
+        {
+            lcd.setCursor(0, 3);
+            lcd.write(2);
+            lcd.print(" Pump OFF");
+        }
+
+        // Animation in the excess space
+        for (int i = 14; i < 20; i++)
+        {
+            lcd.setCursor(i, 0);
+            lcd.write(3);
+            delay(100);
+            lcd.setCursor(i, 0);
+            lcd.write(0);
+            delay(100);
+        }
+
+        lastReadTime = millis();
+    }
+}
+
+void handlePump(float phLevel)
+{
+    Serial.println("AVG pH Level: " + String(phLevel));
+    if (phLevel < PH_TRIGGER_LOW || phLevel > PH_TRIGGER_HIGH)
+    {
+        if (!pumpIsOn)
+        {
+            digitalWrite(PUMP_PIN, LOW);
+            pumpStartTime = millis();
+            pumpIsOn = true;
+            Serial.println("pH level is outside the safe range. Turning on the pump.");
+        }
+    }
+    else
+    {
+        if (pumpIsOn || millis() - pumpStartTime >= PUMP_ON_TIME)
+        {
+            digitalWrite(PUMP_PIN, HIGH);
+            pumpIsOn = false;
+            Serial.println("pH level is within the safe range. Turning off the pump.");
+        }
+    }
+}
+
+void loop()
+{
+    readAndPrintSensorData();
+
+    if (millis() - lastAverageTime >= AVERAGE_INTERVAL)
+    {
+        float averagePhLevel = totalPhLevel / numReadings;
+        float averageTemperature = totalTemperature / numReadings;
+
+        handlePump(averagePhLevel);
+
+        totalPhLevel = 0;
+        totalTemperature = 0;
+        numReadings = 0;
+
+        lastAverageTime = millis();
+    }
+    else
+    {
+        unsigned long remainingTime = AVERAGE_INTERVAL - (millis() - lastAverageTime);
+        Serial.println("Time until next pH level check: " + String(remainingTime / 1000) + "s");
+    }
+    delay(DELAY_TIME);
+}

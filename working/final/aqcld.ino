@@ -109,7 +109,7 @@ byte signal4[] = {
     B00111,
     B00111};
 
-// Classes
+// SMSNotifier class
 class SMSNotifier
 {
 public:
@@ -143,9 +143,9 @@ public:
             sim800l.println("AT+CMGS=\"" + phoneNumber + "\"\r");
             delay(200);
             String SMS = message + " \n\n- Sent from AquaSense System.";
-            sim800l.print(SMS);
+            sim800l.println(SMS);
             delay(100);
-            sim800l.write(26); // ASCII code of CTRL+Z
+            sim800l.println((char)26); // ASCII code of CTRL+Z
             smsSendingInProgress = true;
             smsSendingStartTime = millis();
         }
@@ -181,10 +181,10 @@ private:
         {
             return sim800l.readString();
         }
-        return "";
     }
 };
 
+// AquaSenseSystem class
 class AquaSenseSystem
 {
 public:
@@ -202,34 +202,17 @@ public:
         Serial.begin(9600);
         Serial.println("PH4502C Sensor...");
         pinMode(PUMP_PIN, OUTPUT);
-        digitalWrite(PUMP_PIN, HIGH); // Ensure pump is off initially
+        digitalWrite(PUMP_PIN, LOW);
 
         lcd.init();
         lcd.backlight();
 
-        lcd.createChar(0, waterDrop);
-        lcd.createChar(1, thermometer);
-        lcd.createChar(2, pump);
-        lcd.createChar(3, circle);
-        lcd.createChar(4, celcius);
-        lcd.createChar(5, signal1);
-        lcd.createChar(6, signal2);
-        lcd.createChar(7, signal3);
+        initializeCustomCharacters();
 
         // Bootup animation
-        lcd.setCursor(4, 1);
-        lcd.print("AquaSense");
+        displayBootupAnimation();
+
         smsNotifier.sendSMS("AquaSense: System is online.");
-        // Animation
-        for (int i = 0; i < 3; i++)
-        {
-            lcd.setCursor(14, 1);
-            lcd.write(0);
-            delay(500);
-            lcd.setCursor(14, 1);
-            lcd.print(" ");
-            delay(500);
-        }
 
         lcd.setCursor(14, 1);
         lcd.write(0);
@@ -239,36 +222,9 @@ public:
 
     void loop()
     {
-        readAndPrintSensorData();
-
-        if (millis() - lastAverageTime >= AVERAGE_INTERVAL)
-        {
-            float averagePhLevel = totalPhLevel / numReadings;
-            float averageTemperature = totalTemperature / numReadings;
-
-            handlePump(averagePhLevel);
-
-            totalPhLevel = 0;
-            totalTemperature = 0;
-            numReadings = 0;
-
-            lastAverageTime = millis();
-        }
-        else
-        {
-            unsigned long remainingTime = AVERAGE_INTERVAL - (millis() - lastAverageTime);
-            Serial.println("Time until next pH level check: " + String(remainingTime / 1000) + "s");
-        }
-
-        // Check for incoming SMS messages
-        String message = smsNotifier.readSMS();
-        if (message != "")
-        {
-            processIncomingSMS(message);
-        }
-
-        smsNotifier.update();
-
+        readAndDisplaySensorData();
+        checkAndUpdateAverage();
+        processIncomingSMS();
         delay(DELAY_TIME);
     }
 
@@ -290,20 +246,45 @@ private:
 
     float calibration = 3.27;
 
+    void initializeCustomCharacters()
+    {
+        lcd.createChar(0, waterDrop);
+        lcd.createChar(1, thermometer);
+        lcd.createChar(2, pump);
+        lcd.createChar(3, circle);
+        lcd.createChar(4, celcius);
+        lcd.createChar(5, signal1);
+        lcd.createChar(6, signal2);
+        lcd.createChar(7, signal3);
+    }
+
+    void displayBootupAnimation()
+    {
+        lcd.setCursor(4, 1);
+        lcd.print("AquaSense");
+
+        // Animation
+        for (int i = 0; i < 3; i++)
+        {
+            lcd.setCursor(14, 1);
+            lcd.write(0);
+            delay(500);
+            lcd.setCursor(14, 1);
+            lcd.print(" ");
+            delay(500);
+        }
+    }
+
     int getSignalStrength()
     {
         sim800l.println("AT+CSQ");
         delay(100);
         String response = sim800l.readString();
         int startIndex = response.indexOf(": ") + 2;
-        int endIndex = response.indexOf(",");
-        if (startIndex != -1 && endIndex != -1)
-        {
-            String signalStrengthStr = response.substring(startIndex, endIndex);
-            int signalStrengthValue = signalStrengthStr.toInt();
-            return signalStrengthValue;
-        }
-        return 0;
+        int endIndex = response.indexOf(", ");
+        String signalStrengthStr = response.substring(startIndex, endIndex);
+        int signalStrengthValue = signalStrengthStr.toInt();
+        return signalStrengthValue;
     }
 
     void displaySignalStrength(int signalStrengthValue)
@@ -311,13 +292,20 @@ private:
         if (signalStrengthValue == 0)
         {
             lcd.setCursor(14, 0);
-            lcd.print("NO SIG");
+            lcd.print("NOSIG");
         }
         else
         {
             int numBars = map(signalStrengthValue, 0, 31, 0, 5);
             lcd.setCursor(14, 0);
             for (int i = 0; i < 5; i++)
+            {
+                if (i < numBars)
+                {
+                    lcd.print(" ");
+                }
+            }
+            for (int i = 0; i < 4; i++)
             {
                 if (i < numBars)
                 {
@@ -331,46 +319,51 @@ private:
         }
     }
 
-    void processIncomingSMS(const String &message)
+    void processIncomingSMS()
     {
-        if (message == "PUMP ON")
+        String message = smsNotifier.readSMS();
+        if (message != "")
         {
-            if (!pumpIsOn)
+            Serial.println("Received SMS: " + message);
+            if (message == "PUMP ON")
             {
-                digitalWrite(PUMP_PIN, LOW);
-                pumpIsOn = true;
-                smsNotifier.sendSMS("Pump has been turned on manually.");
+                if (!pumpIsOn)
+                {
+                    digitalWrite(PUMP_PIN, LOW);
+                    pumpIsOn = true;
+                    smsNotifier.sendSMS("Pump has been turned on manually.");
+                }
             }
-        }
-        else if (message == "PUMP OFF")
-        {
-            if (pumpIsOn)
+            else if (message == "PUMP OFF")
             {
-                digitalWrite(PUMP_PIN, HIGH);
-                pumpIsOn = false;
-                smsNotifier.sendSMS("Pump has been turned off manually.");
+                if (pumpIsOn)
+                {
+                    digitalWrite(PUMP_PIN, HIGH);
+                    pumpIsOn = false;
+                    smsNotifier.sendSMS("Pump has been turned off manually.");
+                }
             }
-        }
-        else if (message == "COMMANDS")
-        {
-            String commandList = "Available commands:\n";
-            commandList += "PUMP ON - Turn on the pump manually\n";
-            commandList += "PUMP OFF - Turn off the pump manually\n";
-            commandList += "STATUS - Get the current status of the system\n";
-            commandList += "COMMANDS - List the available commands";
-            smsNotifier.sendSMS(commandList);
-        }
-        else if (message == "STATUS")
-        {
-            String statusMessage = "Current system status:\n";
-            statusMessage += "pH Level: " + String(readPHLevel(), 1) + "\n";
-            statusMessage += "Temperature: " + String(readTemperature(), 1) + " °C\n";
-            statusMessage += "Pump Status: " + (pumpIsOn ? String("ON") : String("OFF"));
-            smsNotifier.sendSMS(statusMessage);
+            else if (message == "COMMANDS")
+            {
+                String commandList = "Available commands:\n";
+                commandList += "PUMP ON - Turn on the pump manually\n";
+                commandList += "PUMP OFF - Turn off the pump manually\n";
+                commandList += "STATUS - Get the current status of the system\n";
+                commandList += "COMMANDS - List the available commands";
+                smsNotifier.sendSMS(commandList);
+            }
+            else if (message == "STATUS")
+            {
+                String statusMessage = "Current system status:\n";
+                statusMessage += "pH Level: " + String(readPHLevel(), 1) + "\n";
+                statusMessage += "Temperature: " + String(readTemperature(), 1) + " °C\n";
+                statusMessage += "Pump Status: " + String((pumpIsOn ? "ON" : "OFF"));
+                smsNotifier.sendSMS(statusMessage);
+            }
         }
     }
 
-    void readAndPrintSensorData()
+    void readAndDisplaySensorData()
     {
         int signalStrengthValue = getSignalStrength();
         displaySignalStrength(signalStrengthValue);
@@ -387,89 +380,113 @@ private:
             Serial.println("Current Temperature: " + String(temperature) + " °C");
             Serial.println("Current pH Level: " + String(phLevel));
 
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            lcd.write(1);
-            lcd.print(" ");
-            lcd.print(String(temperature, 1));
-            lcd.write(4);
-            lcd.print("C");
-
-            lcd.setCursor(0, 1);
-            lcd.write(0);
-            lcd.print(" pH ");
-            lcd.print(String(phLevel, 1));
-
             float doLevel = 14.6 - 0.4 * phLevel; // Inversely proportional to pH level
-            String doDescription;
+            String doDescription = getDissolvedOxygenDescription(doLevel);
 
-            if (doLevel >= 8.0)
-            {
-                doDescription = "Optimal";
-            }
-            else if (doLevel >= 6.0)
-            {
-                doDescription = "High";
-            }
-            else if (doLevel >= 4.0)
-            {
-                doDescription = "Moderate";
-            }
-            else if (doLevel >= 2.0)
-            {
-                doDescription = "Low";
-            }
-            else if (doLevel >= 1.0)
-            {
-                doDescription = "Critical";
-            }
-            else if (doLevel >= 0.5)
-            {
-                doDescription = "Anoxic";
-            }
-            else if (doLevel >= 0.2)
-            {
-                doDescription = "Fluctuating";
-            }
-            else if (doLevel >= 0.1)
-            {
-                doDescription = "Saturated";
-            }
-            else
-            {
-                doDescription = "Supersaturated";
-            }
-
-            lcd.setCursor(0, 2);
-            lcd.print("DO: " + doDescription);
-
-            if (pumpIsOn)
-            {
-                lcd.setCursor(0, 3);
-                lcd.write(2);
-                lcd.print(" Pump ON ");
-            }
-            else
-            {
-                lcd.setCursor(0, 3);
-                lcd.write(2);
-                lcd.print(" Pump OFF");
-            }
-
-            int seconds = max(remainingTime / 1000, 0); // Ensuring seconds is not negative
-            String countdownStr = String(seconds, DEC);
-            lcd.setCursor(15, 1);
-            lcd.print("Next");
-            lcd.setCursor(15, 2);
-            if (seconds < 10)
-            {
-                lcd.print("0" + countdownStr + "sec");
-            }
-            else
-            {
-                lcd.print(countdownStr + "sec");
-            }
+            displaySensorData(phLevel, temperature, doDescription);
+            displayCountdown();
             lastReadTime = millis();
+        }
+    }
+
+    String getDissolvedOxygenDescription(float doLevel)
+    {
+        if (doLevel >= 8.0)
+        {
+            return "Optimal";
+        }
+        else if (doLevel >= 6.0)
+        {
+            return "High";
+        }
+        else if (doLevel >= 4.0)
+        {
+            return "Moderate";
+        }
+        else if (doLevel >= 2.0)
+        {
+            return "Low";
+        }
+        else if (doLevel >= 1.0)
+        {
+            return "Critical";
+        }
+        else if (doLevel >= 0.5)
+        {
+            return "Anoxic";
+        }
+        else if (doLevel >= 0.2)
+        {
+            return "Fluctuating";
+        }
+        else if (doLevel >= 0.1)
+        {
+            return "Saturated";
+        }
+        else
+        {
+            return "Supersaturated";
+        }
+    }
+
+    void displaySensorData(float phLevel, float temperature, const String &doDescription)
+    {
+        lcd.setCursor(0, 0);
+        lcd.print("DO: " + doDescription);
+        lcd.setCursor(0, 1);
+        lcd.print("pH: ");
+        lcd.write(0);
+        lcd.print(String(phLevel, 1));
+        lcd.setCursor(0, 2);
+        lcd.print("Temp: ");
+        lcd.write(1);
+        lcd.print(String(temperature, 1) + (char)4 + "C");
+        if (pumpIsOn)
+        {
+            lcd.setCursor(0, 3);
+            lcd.write(2);
+            lcd.print(" Pump ON ");
+        }
+        else
+        {
+            lcd.setCursor(0, 3);
+            lcd.write(2);
+            lcd.print(" Pump OFF");
+        }
+    }
+
+    void displayCountdown()
+    {
+        unsigned long remainingTime = AVERAGE_INTERVAL - (millis() - lastAverageTime);
+        int seconds = max(0, (int)(remainingTime / 1000));
+        String countdownStr = String(seconds);
+        lcd.setCursor(15, 1);
+        lcd.print("Next");
+        lcd.setCursor(15, 2);
+        if (seconds < 10)
+        {
+            lcd.print("0" + countdownStr + "sec");
+        }
+        else
+        {
+            lcd.print(countdownStr + "sec");
+        }
+    }
+
+    void checkAndUpdateAverage()
+    {
+        if (millis() - lastAverageTime >= AVERAGE_INTERVAL)
+        {
+            float averagePhLevel = totalPhLevel / numReadings;
+            float averageTemperature = totalTemperature / numReadings;
+
+            handlePump(averagePhLevel);
+
+            totalPhLevel = 0;
+            totalTemperature = 0;
+            numReadings = 0;
+
+            lastAverageTime = millis();
         }
     }
 
@@ -487,12 +504,13 @@ private:
 
     void handlePump(float phLevelAvg)
     {
-        Serial.println("AVG pH Level: " + String(phLevelAvg));
-        if (phLevelAvg < PH_TRIGGER_LOW || phLevelAvg > PH_TRIGGER_HIGH)
+        int phLevel = phLevelAvg;
+        Serial.println("AVG pH Level: " + String(phLevel));
+        if (phLevel < PH_TRIGGER_LOW || phLevel > PH_TRIGGER_HIGH)
         {
             if (!pumpIsOn)
             {
-                notifyPumpOn(phLevelAvg);
+                notifyPumpOn(phLevel);
                 digitalWrite(PUMP_PIN, LOW);
                 pumpStartTime = millis();
                 pumpIsOn = true;
@@ -503,7 +521,7 @@ private:
         {
             if (pumpIsOn && (millis() - pumpStartTime >= PUMP_ON_TIME))
             {
-                notifyPumpOff(phLevelAvg);
+                notifyPumpOff(phLevel);
                 digitalWrite(PUMP_PIN, HIGH);
                 pumpIsOn = false;
                 Serial.println("pH level is within the safe range. Turning off the pump.");
@@ -513,17 +531,13 @@ private:
 
     void notifyPumpOn(float AvgPhLevel)
     {
-        char buffer[50];
-        sprintf(buffer, "%.2f", AvgPhLevel);
-        String message = "The pump has been turned on as the pH level (" + String(buffer) + ") is outside the safe range.";
+        String message = "The pump has been turned on as the pH level is outside the safe range.";
         smsNotifier.sendSMS(message);
     }
 
     void notifyPumpOff(float AvgPhLevel)
     {
-        char buffer[50];
-        sprintf(buffer, "%.2f", AvgPhLevel);
-        String message = "The pump has been turned off as the pH level (" + String(buffer) + ") is within the safe range.";
+        String message = "The pump has been turned off as the pH level is within the safe range.";
         smsNotifier.sendSMS(message);
     }
 };

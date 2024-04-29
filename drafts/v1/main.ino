@@ -151,6 +151,12 @@ public:
             smsSendingInProgress = true;
             smsSendingStartTime = millis();
         }
+        else if (smsSendingInProgress && (millis() - smsSendingStartTime >= SMS_SENDING_TIMEOUT))
+        {
+            // Exit the function if the SMS sending process takes too long
+            smsSendingInProgress = false;
+            _buffer = _readSerial();
+        }
     }
 
     void update()
@@ -445,98 +451,104 @@ private:
             lcd.print("Temp: ");
             lcd.write(1);
             lcd.print(String(temperature, 1) + (char)4 + "C");
-            if (pumpIsOn)
-            {
-                lcd.setCursor(0, 3);
-                lcd.write(2);
-                lcd.print(" Pump ON ");
-            }
-            else
-            {
-                lcd.setCursor(0, 3);
-                lcd.write(2);
-                lcd.print(" Pump OFF");
-            }
-
-            unsigned long remainingTime = AVERAGE_INTERVAL - (millis() - lastAverageTime);
-            if (remainingTime < 0)
-            {
-                remainingTime = 0;
-            }
-            int seconds = remainingTime / 1000;
-            String countdownStr = String(seconds);
-            lcd.setCursor(15, 1);
-            lcd.print("Next");
-            lcd.setCursor(15, 2);
-            if (seconds < 10)
-            {
-                lcd.print("0" + countdownStr + "sec");
-            }
-            else
-            {
-                lcd.print(countdownStr + "sec");
-            }
-            lastReadTime = millis();
         }
     }
 
-    float readPHLevel()
-    {
-        float phLevel = (ph4502.read_ph_level() - calibration); // TODO: Adjust the ph offset
-        return phLevel;
-    }
-
-    float readTemperature()
-    {
-        float temperature = ph4502.read_temp() / 27;
-        return temperature;
-    }
-
-    void handlePump(float phLevelAvg)
-    {
-        int phLevel = phLevelAvg;
-        if (phLevel < PH_TRIGGER_LOW || phLevel > PH_TRIGGER_HIGH)
-        {
-            if (!pumpIsOn)
-            {
-                notifyPumpOn(phLevel);
-                digitalWrite(PUMP_PIN, LOW);
-                pumpStartTime = millis();
-                pumpIsOn = true;
-                Serial.println("pH level is outside the safe range. Turning on the pump.");
-            }
-        }
-        else
-        {
-            if (pumpIsOn || millis() - pumpStartTime >= PUMP_ON_TIME)
-            {
-                if (pumpIsOn)
-                { // Notify only if the pump was turned on
-                    notifyPumpOff(phLevel);
-                }
-                digitalWrite(PUMP_PIN, HIGH);
-                pumpIsOn = false;
-                Serial.println("pH level is within the safe range. Turning off the pump.");
-            }
-        }
-    }
-
-    void notifyPumpOn(float AvgPhLevel)
-    {
-        char buffer[50];
-        sprintf(buffer, "%.2f", AvgPhLevel);
-        String message = "The pump has been turned on as the pH level is outside the safe range.";
-        smsNotifier.sendSMS(message);
-    }
-
-    void notifyPumpOff(float AvgPhLevel)
-    {
-        char buffer[50];
-        sprintf(buffer, "%.2f", AvgPhLevel);
-        String message = "The pump has been turned off as the pH level is within the safe range.";
-        smsNotifier.sendSMS(message);
-    }
+    // Rest of the code...
 };
+if (pumpIsOn)
+{
+    lcd.setCursor(0, 3);
+    lcd.write(2);
+    lcd.print(" Pump ON ");
+}
+else
+{
+    lcd.setCursor(0, 3);
+    lcd.write(2);
+    lcd.print(" Pump OFF");
+}
+
+unsigned long remainingTime = AVERAGE_INTERVAL - (millis() - lastAverageTime);
+if (remainingTime < 0)
+{
+    remainingTime = 0;
+}
+int seconds = remainingTime / 1000;
+String countdownStr = String(seconds);
+lcd.setCursor(15, 1);
+lcd.print("Next");
+lcd.setCursor(15, 2);
+if (seconds < 10)
+{
+    lcd.print("0" + countdownStr + "sec");
+}
+else
+{
+    lcd.print(countdownStr + "sec");
+}
+lastReadTime = millis();
+}
+}
+
+float readPHLevel()
+{
+    float phLevel = (ph4502.read_ph_level() - calibration); // TODO: Adjust the ph offset
+    return phLevel;
+}
+
+float readTemperature()
+{
+    float temperature = ph4502.read_temp() / 27;
+    return temperature;
+}
+
+void handlePump(float phLevelAvg)
+{
+    int phLevel = phLevelAvg;
+    if (phLevel < PH_TRIGGER_LOW || phLevel > PH_TRIGGER_HIGH)
+    {
+        if (!pumpIsOn)
+        {
+            notifyPumpOn(phLevel);
+            digitalWrite(PUMP_PIN, LOW);
+            pumpStartTime = millis();
+            pumpIsOn = true;
+            Serial.println("pH level is outside the safe range. Turning on the pump.");
+        }
+    }
+    else
+    {
+        if (pumpIsOn || millis() - pumpStartTime >= PUMP_ON_TIME)
+        {
+            if (pumpIsOn)
+            { // Notify only if the pump was turned on
+                notifyPumpOff(phLevel);
+            }
+            digitalWrite(PUMP_PIN, HIGH);
+            pumpIsOn = false;
+            Serial.println("pH level is within the safe range. Turning off the pump.");
+        }
+    }
+}
+
+void notifyPumpOn(float AvgPhLevel)
+{
+    char buffer[50];
+    sprintf(buffer, "%.2f", AvgPhLevel);
+    String message = "The pump has been turned on as the pH level is outside the safe range.";
+    smsNotifier.sendSMS(message);
+}
+
+void notifyPumpOff(float AvgPhLevel)
+{
+    char buffer[50];
+    sprintf(buffer, "%.2f", AvgPhLevel);
+    String message = "The pump has been turned off as the pH level is within the safe range.";
+    smsNotifier.sendSMS(message);
+}
+}
+;
 
 // Main program
 AquaSenseSystem aquaSenseSystem;
